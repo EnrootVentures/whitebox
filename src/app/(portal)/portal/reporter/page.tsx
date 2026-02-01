@@ -9,6 +9,9 @@ type ReportRow = {
   report_id: number;
   title: string;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
   is_spam: boolean | null;
   created_at: string | null;
 };
@@ -48,7 +51,7 @@ export default function ReporterDashboardPage() {
 
       const { data: reportRows, error: reportError } = await supabase
         .from("reports")
-        .select("report_id,title,status,is_spam,created_at")
+        .select("report_id,title,status,status_id,is_spam,created_at,report_statuses(code,label)")
         .eq("reporter_user_id", profile.user_id)
         .order("created_at", { ascending: false });
 
@@ -68,7 +71,13 @@ export default function ReporterDashboardPage() {
         : { data: [] };
 
       if (!isMounted) return;
-      setReports(reportRows ?? []);
+      const mapped =
+        reportRows?.map((row) => ({
+          ...row,
+          status_code: row.report_statuses?.code ?? row.status ?? null,
+          status_label: row.report_statuses?.label ?? row.status ?? null,
+        })) ?? [];
+      setReports(mapped);
       setComments(commentRows ?? []);
     };
 
@@ -80,11 +89,17 @@ export default function ReporterDashboardPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const inFilter = reports.filter((row) => row.status === "waiting_filter").length;
-    const active = reports.filter(
-      (row) => row.status && ["open", "investigation", "escalated"].includes(row.status)
+    const inFilter = reports.filter(
+      (row) => (row.status_code ?? row.status) === "pre_evaluation"
     ).length;
-    const archived = reports.filter((row) => row.status === "archived").length;
+    const active = reports.filter(
+      (row) =>
+        row.status_code &&
+        ["waiting_admitted", "open_in_progress", "investigation", "remediation"].includes(
+          row.status_code
+        )
+    ).length;
+    const archived = reports.filter((row) => (row.status_code ?? row.status) === "archived").length;
     const spam = reports.filter((row) => row.is_spam).length;
     return { inFilter, active, archived, spam };
   }, [reports]);

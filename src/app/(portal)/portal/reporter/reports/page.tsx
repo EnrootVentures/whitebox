@@ -15,6 +15,10 @@ type ReportRow = {
   title: string;
   description: string;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
+  report_statuses?: { code: string; label: string } | null;
   is_spam: boolean | null;
   created_at: string | null;
 };
@@ -71,7 +75,9 @@ export default function ReporterReportsPage() {
 
       const { data: reportRows, error: reportError } = await supabase
         .from("reports")
-        .select("report_id,report_code,title,description,status,is_spam,created_at")
+        .select(
+          "report_id,report_code,title,description,status,status_id,is_spam,created_at,report_statuses(code,label)"
+        )
         .eq("reporter_user_id", profile.user_id)
         .order("created_at", { ascending: false });
 
@@ -80,7 +86,13 @@ export default function ReporterReportsPage() {
         setError(reportError.message);
         return;
       }
-      setRows(reportRows ?? []);
+      const mapped =
+        reportRows?.map((row) => ({
+          ...row,
+          status_code: row.report_statuses?.code ?? row.status ?? null,
+          status_label: row.report_statuses?.label ?? row.status ?? null,
+        })) ?? [];
+      setRows(mapped);
     };
 
     loadReports();
@@ -93,15 +105,19 @@ export default function ReporterReportsPage() {
   const filteredRows = useMemo(() => {
     switch (activeTab) {
       case "Filter":
-        return rows.filter((row) => row.status === "waiting_filter");
+        return rows.filter((row) => (row.status_code ?? row.status) === "pre_evaluation");
       case "Active":
         return rows.filter(
-          (row) => row.status && ["open", "investigation", "escalated"].includes(row.status)
+          (row) =>
+            row.status_code &&
+            ["waiting_admitted", "open_in_progress", "investigation", "remediation"].includes(
+              row.status_code
+            )
         );
       case "Spam":
         return rows.filter((row) => row.is_spam);
       case "Archived":
-        return rows.filter((row) => row.status === "archived");
+        return rows.filter((row) => (row.status_code ?? row.status) === "archived");
       case "Created":
       default:
         return rows;
@@ -115,13 +131,18 @@ export default function ReporterReportsPage() {
       const { data: reportRow, error: reportError } = await supabase
         .from("reports")
         .select(
-          "report_id,report_code,title,description,status,is_spam,created_at,incident_date,incident_location,country,severity_level,suggested_remedy,legal_steps_taken,original_language,is_incident_is_continuing,intake_payload"
+          "report_id,report_code,title,description,status,status_id,is_spam,created_at,incident_date,incident_location,country,severity_level,suggested_remedy,legal_steps_taken,original_language,is_incident_is_continuing,intake_payload,report_statuses(code,label)"
         )
         .eq("report_id", reportId)
         .maybeSingle();
       if (reportError) throw new Error(reportError.message);
       if (!reportRow) throw new Error("Report not found.");
-      setDetails({ report: reportRow as ReportDetails["report"] });
+      const mapped = {
+        ...reportRow,
+        status_code: reportRow.report_statuses?.code ?? reportRow.status ?? null,
+        status_label: reportRow.report_statuses?.label ?? reportRow.status ?? null,
+      };
+      setDetails({ report: mapped as ReportDetails["report"] });
       setDetailsTab("details");
       setViewOpen(true);
     } catch (err) {
@@ -236,7 +257,9 @@ export default function ReporterReportsPage() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-4 py-3">{row.status || "-"}</td>
+                    <td className="px-4 py-3">
+                      {row.status_label ?? row.status_code ?? row.status ?? "-"}
+                    </td>
                     <td className="px-4 py-3">
                       {row.created_at ? new Date(row.created_at).toLocaleDateString() : "-"}
                     </td>
@@ -289,7 +312,10 @@ export default function ReporterReportsPage() {
                     </p>
                     <p className="mt-3 text-xs text-slate-400">Status</p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {details.report.status ?? "-"}
+                      {details.report.status_label ??
+                        details.report.status_code ??
+                        details.report.status ??
+                        "-"}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">

@@ -11,6 +11,8 @@ type ArchivedRow = {
   description: string;
   created_at: string;
   status: string;
+  status_code?: string | null;
+  status_label?: string | null;
 };
 
 export default function AdminArchivePage() {
@@ -38,7 +40,7 @@ export default function AdminArchivePage() {
     setIsSaving(true);
     setError(null);
     try {
-      await adminInvoke("updateReport", { report_id: reportId, status: "open" });
+      await adminInvoke("updateReport", { report_id: reportId, status_code: "open_in_progress" });
       setRows((prev) => prev.filter((row) => row.report_id !== reportId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update report.");
@@ -68,7 +70,7 @@ export default function AdminArchivePage() {
                 <td className="px-4 py-3">
                   {row.created_at ? new Date(row.created_at).toLocaleDateString() : "-"}
                 </td>
-                <td className="px-4 py-3">{row.status}</td>
+                <td className="px-4 py-3">{row.status_label ?? row.status_code ?? row.status}</td>
                 <td className="px-4 py-3">
                   <button
                     type="button"

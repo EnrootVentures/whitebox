@@ -11,6 +11,10 @@ type ReportRow = {
   report_code: string;
   title: string;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
+  report_statuses?: { code: string; label: string } | null;
   is_spam: boolean | null;
   created_at: string | null;
 };
@@ -56,7 +60,7 @@ export default function PortalDashboardPage() {
         const context = await loadOrgContext();
         const { data: reportRows, error: reportError } = await supabase
           .from("reports")
-          .select("report_id,report_code,title,status,is_spam,created_at")
+          .select("report_id,report_code,title,status,status_id,is_spam,created_at,report_statuses(code,label)")
           .eq("reported_org_id", context.organizationId)
           .order("created_at", { ascending: false });
 
@@ -81,7 +85,13 @@ export default function PortalDashboardPage() {
         ]);
 
         if (!isMounted) return;
-        setReports(reportRows ?? []);
+        const mapped =
+          reportRows?.map((row) => ({
+            ...row,
+            status_code: row.report_statuses?.code ?? row.status ?? null,
+            status_label: row.report_statuses?.label ?? row.status ?? null,
+          })) ?? [];
+        setReports(mapped);
         setActions(actionRows ?? []);
         setComments(commentRows ?? []);
       } catch (err) {
@@ -98,16 +108,24 @@ export default function PortalDashboardPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const inFilter = reports.filter((row) => row.status === "waiting_filter").length;
-    const active = reports.filter(
-      (row) => row.status && ["open", "investigation", "escalated"].includes(row.status)
+    const inFilter = reports.filter(
+      (row) => (row.status_code ?? row.status) === "pre_evaluation"
     ).length;
-    const archived = reports.filter((row) => row.status === "archived").length;
+    const active = reports.filter(
+      (row) =>
+        row.status_code &&
+        ["waiting_admitted", "open_in_progress", "investigation", "remediation"].includes(
+          row.status_code
+        )
+    ).length;
+    const archived = reports.filter((row) => (row.status_code ?? row.status) === "archived").length;
     const spam = reports.filter((row) => row.is_spam).length;
-    const waiting = reports.filter((row) => row.status === "waiting").length;
-    const escalated = reports.filter((row) => row.status === "escalated").length;
-    const open = reports.filter((row) => row.status === "open").length;
-    return { inFilter, active, archived, spam, waiting, escalated, open };
+    const waiting = reports.filter((row) => (row.status_code ?? row.status) === "waiting_admitted")
+      .length;
+    const open = reports.filter((row) => (row.status_code ?? row.status) === "open_in_progress").length;
+    const remediation = reports.filter((row) => (row.status_code ?? row.status) === "remediation")
+      .length;
+    return { inFilter, active, archived, spam, waiting, open, remediation };
   }, [reports]);
 
   return (
@@ -137,7 +155,7 @@ export default function PortalDashboardPage() {
             {[
               { label: "Open", value: stats.open.toString(), tone: "bg-emerald-50 text-emerald-700" },
               { label: "Waiting", value: stats.waiting.toString(), tone: "bg-amber-50 text-amber-700" },
-              { label: "Escalated", value: stats.escalated.toString(), tone: "bg-rose-50 text-rose-700" },
+              { label: "Remediation", value: stats.remediation.toString(), tone: "bg-rose-50 text-rose-700" },
             ].map((item) => (
               <div key={item.label} className="rounded-2xl border border-slate-100 p-4">
                 <p className="text-xs text-slate-400">{item.label}</p>

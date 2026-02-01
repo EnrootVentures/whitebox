@@ -12,6 +12,10 @@ type ActionRow = {
   report_id: number;
   action_description: string;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
+  report_action_statuses?: { code: string; label: string } | null;
   due_date: string | null;
   created_at: string | null;
 };
@@ -22,7 +26,16 @@ type ReportOption = {
   title: string;
 };
 
-const statusOptions = ["planned", "in_progress", "completed", "blocked"];
+const statusOptions = [
+  "suggested",
+  "action_formulation",
+  "action_implemented",
+  "failed",
+  "extended_due",
+  "successful",
+  "feedback_requested",
+  "resolved",
+];
 
 export default function ActionsPage() {
   const [rows, setRows] = useState<ActionRow[]>([]);
@@ -31,11 +44,14 @@ export default function ActionsPage() {
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [statusLookup, setStatusLookup] = useState<
+    Record<string, { id: number; label: string }>
+  >({});
   const [form, setForm] = useState({
     reportId: "",
     description: "",
     dueDate: "",
-    status: "planned",
+    status: "action_formulation",
   });
 
   useEffect(() => {
@@ -43,10 +59,12 @@ export default function ActionsPage() {
     const loadData = async () => {
       try {
         const context = await loadOrgContext();
-        const [{ data: actionRows }, { data: reportRows }] = await Promise.all([
+        const [{ data: actionRows }, { data: reportRows }, { data: statusRows }] = await Promise.all([
           supabase
             .from("report_actions")
-            .select("action_id,report_id,action_description,status,due_date,created_at")
+            .select(
+              "action_id,report_id,action_description,status,status_id,due_date,created_at,report_action_statuses(code,label)"
+            )
             .eq("responsible_org_id", context.organizationId)
             .order("created_at", { ascending: false }),
           supabase
@@ -54,10 +72,22 @@ export default function ActionsPage() {
             .select("report_id,report_code,title")
             .eq("reported_org_id", context.organizationId)
             .order("created_at", { ascending: false }),
+          supabase.from("report_action_statuses").select("status_id,code,label").order("display_order"),
         ]);
 
         if (!isMounted) return;
-        setRows(actionRows ?? []);
+        const map: Record<string, { id: number; label: string }> = {};
+        (statusRows ?? []).forEach((row) => {
+          map[row.code] = { id: row.status_id, label: row.label };
+        });
+        setStatusLookup(map);
+        const mapped =
+          actionRows?.map((row) => ({
+            ...row,
+            status_code: row.report_action_statuses?.code ?? row.status ?? null,
+            status_label: row.report_action_statuses?.label ?? row.status ?? null,
+          })) ?? [];
+        setRows(mapped);
         setReports(reportRows ?? []);
       } catch (err) {
         if (!isMounted) return;
@@ -72,20 +102,43 @@ export default function ActionsPage() {
 
   const filteredRows = useMemo(() => {
     if (!filter) return rows;
-    return rows.filter((row) => row.status === filter);
+    return rows.filter((row) => (row.status_code ?? row.status) === filter);
   }, [rows, filter]);
 
   const updateAction = async (actionId: number, updates: Partial<ActionRow>) => {
     setSaving(true);
     setError(null);
     try {
+      let payload = { ...updates } as Record<string, unknown>;
+      if (updates.status_code) {
+        const statusEntry = statusLookup[updates.status_code];
+        payload = {
+          ...payload,
+          status_id: statusEntry?.id ?? null,
+          status: updates.status_code,
+        };
+      }
       const { error: updateError } = await supabase
         .from("report_actions")
-        .update(updates)
+        .update(payload)
         .eq("action_id", actionId);
       if (updateError) throw new Error(updateError.message);
       setRows((prev) =>
-        prev.map((row) => (row.action_id === actionId ? { ...row, ...updates } : row))
+        prev.map((row) =>
+          row.action_id === actionId
+            ? {
+                ...row,
+                ...updates,
+                status_id: (payload.status_id as number) ?? row.status_id ?? null,
+                status_code:
+                  (updates.status_code as string) ?? row.status_code ?? row.status ?? null,
+                status_label:
+                  updates.status_code && statusLookup[updates.status_code]
+                    ? statusLookup[updates.status_code].label
+                    : row.status_label ?? row.status ?? null,
+              }
+            : row
+        )
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update action.");
@@ -104,25 +157,37 @@ export default function ActionsPage() {
     setError(null);
     try {
       const context = await loadOrgContext();
+      const statusEntry = statusLookup[form.status];
       const { data: insertRow, error: insertError } = await supabase
         .from("report_actions")
         .insert({
           report_id: Number(form.reportId),
           responsible_org_id: context.organizationId,
+          owner_org_id: context.organizationId,
           action_description: form.description.trim(),
           due_date: form.dueDate || null,
           status: form.status,
+          status_id: statusEntry?.id ?? null,
           is_public: true,
         })
-        .select("action_id,report_id,action_description,status,due_date,created_at")
+        .select(
+          "action_id,report_id,action_description,status,status_id,due_date,created_at,report_action_statuses(code,label)"
+        )
         .single();
 
       if (insertError || !insertRow) {
         throw new Error(insertError?.message ?? "Unable to create action.");
       }
 
-      setRows((prev) => [insertRow, ...prev]);
-      setForm({ reportId: "", description: "", dueDate: "", status: "planned" });
+      const mapped = insertRow
+        ? {
+            ...insertRow,
+            status_code: insertRow.report_action_statuses?.code ?? insertRow.status ?? null,
+            status_label: insertRow.report_action_statuses?.label ?? insertRow.status ?? null,
+          }
+        : null;
+      setRows((prev) => (mapped ? [mapped, ...prev] : prev));
+      setForm({ reportId: "", description: "", dueDate: "", status: "action_formulation" });
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create action.");
@@ -179,9 +244,9 @@ export default function ActionsPage() {
                     <td className="px-4 py-3">
                       <select
                         className="rounded-full border border-slate-200 px-2 py-1 text-[11px]"
-                        value={row.status || ""}
+                        value={row.status_code ?? row.status ?? ""}
                         onChange={(event) =>
-                          updateAction(row.action_id, { status: event.target.value || null })
+                          updateAction(row.action_id, { status_code: event.target.value || null })
                         }
                         disabled={saving}
                       >

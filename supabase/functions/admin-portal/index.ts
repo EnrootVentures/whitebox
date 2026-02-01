@@ -72,35 +72,60 @@ serve(async (req) => {
 
     switch (action) {
       case "dashboard": {
+        const { data: statusRows } = await adminClient
+          .from("report_statuses")
+          .select("status_id,code")
+          .in("code", ["pre_evaluation", "investigation", "remediation", "archived"]);
+        const statusMap = new Map((statusRows ?? []).map((row) => [row.code, row.status_id]));
         const [
           { count: totalReports },
           { count: spamReports },
           { count: archivedReports },
           { count: waitingFilter },
           { count: investigating },
-          { count: escalated },
+          { count: remediation },
         ] = await Promise.all([
           adminClient.from("reports").select("report_id", { count: "exact", head: true }),
           adminClient
             .from("reports")
             .select("report_id", { count: "exact", head: true })
             .eq("is_spam", true),
-          adminClient
-            .from("reports")
-            .select("report_id", { count: "exact", head: true })
-            .eq("status", "archived"),
-          adminClient
-            .from("reports")
-            .select("report_id", { count: "exact", head: true })
-            .eq("status", "waiting_filter"),
-          adminClient
-            .from("reports")
-            .select("report_id", { count: "exact", head: true })
-            .eq("status", "investigation"),
-          adminClient
-            .from("reports")
-            .select("report_id", { count: "exact", head: true })
-            .eq("status", "escalated"),
+          statusMap.get("archived")
+            ? adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status_id", statusMap.get("archived"))
+            : adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status", "archived"),
+          statusMap.get("pre_evaluation")
+            ? adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status_id", statusMap.get("pre_evaluation"))
+            : adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status", "waiting_filter"),
+          statusMap.get("investigation")
+            ? adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status_id", statusMap.get("investigation"))
+            : adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status", "investigation"),
+          statusMap.get("remediation")
+            ? adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status_id", statusMap.get("remediation"))
+            : adminClient
+                .from("reports")
+                .select("report_id", { count: "exact", head: true })
+                .eq("status", "escalated"),
         ]);
 
         return jsonResponse(200, {
@@ -111,7 +136,7 @@ serve(async (req) => {
             archivedReports: archivedReports ?? 0,
             waitingFilter: waitingFilter ?? 0,
             investigating: investigating ?? 0,
-            escalated: escalated ?? 0,
+            remediation: remediation ?? 0,
           },
         });
       }
@@ -227,7 +252,7 @@ serve(async (req) => {
         const { data: reports, error } = await adminClient
           .from("reports")
           .select(
-            "report_id,report_code,title,description,spam_score,created_at,incident_location,status,is_spam,reported_org_id,reporter_user_id",
+            "report_id,report_code,title,description,spam_score,created_at,incident_location,status,status_id,is_spam,reported_org_id,reporter_user_id,report_statuses(code,label)",
           )
           .order("created_at", { ascending: false });
         if (error) throw error;
@@ -256,6 +281,8 @@ serve(async (req) => {
           data: {
             reports: (reports ?? []).map((report) => ({
               ...report,
+              status_code: report.report_statuses?.code ?? report.status ?? null,
+              status_label: report.report_statuses?.label ?? report.status ?? null,
               organisation: report.reported_org_id ? orgMap.get(report.reported_org_id) ?? "-" : "-",
               reporter: report.reporter_user_id ? userMap.get(report.reporter_user_id) ?? "-" : "-",
             })),
@@ -268,7 +295,7 @@ serve(async (req) => {
 
         const { data: report, error: reportError } = await adminClient
           .from("reports")
-          .select("*")
+          .select("*,report_statuses(code,label)")
           .eq("report_id", report_id)
           .maybeSingle();
         if (reportError) throw reportError;
@@ -298,7 +325,11 @@ serve(async (req) => {
         return jsonResponse(200, {
           success: true,
           data: {
-            report,
+            report: {
+              ...report,
+              status_code: report.report_statuses?.code ?? report.status ?? null,
+              status_label: report.report_statuses?.label ?? report.status ?? null,
+            },
             reporter,
             organisation,
           },
@@ -307,8 +338,19 @@ serve(async (req) => {
       case "updateReport": {
         const { report_id, ...updates } = payload ?? {};
         if (!report_id) throw new Error("report_id is required.");
+        const statusCode = updates.status_code ?? updates.status ?? null;
+        let statusId: number | null = updates.status_id ?? null;
+        if (statusCode && !statusId) {
+          const { data: statusRow } = await adminClient
+            .from("report_statuses")
+            .select("status_id")
+            .eq("code", statusCode)
+            .maybeSingle();
+          statusId = statusRow?.status_id ?? null;
+        }
         const allowed = {
-          status: updates.status,
+          status: statusCode ?? updates.status ?? null,
+          status_id: statusId ?? undefined,
           is_spam: updates.is_spam,
           spam_score: updates.spam_score,
           rejection_category: updates.rejection_category,
@@ -667,13 +709,32 @@ serve(async (req) => {
         return jsonResponse(200, { success: true, data: { reports: reports ?? [] } });
       }
       case "listArchivedReports": {
-        const { data: reports, error } = await adminClient
+        const { data: archivedStatus } = await adminClient
+          .from("report_statuses")
+          .select("status_id")
+          .eq("code", "archived")
+          .maybeSingle();
+        let reportsQuery = adminClient
           .from("reports")
-          .select("report_id,report_code,title,description,created_at,status")
-          .eq("status", "archived")
+          .select("report_id,report_code,title,description,created_at,status,status_id,report_statuses(code,label)")
           .order("created_at", { ascending: false });
+        if (archivedStatus?.status_id) {
+          reportsQuery = reportsQuery.eq("status_id", archivedStatus.status_id);
+        } else {
+          reportsQuery = reportsQuery.eq("status", "archived");
+        }
+        const { data: reports, error } = await reportsQuery;
         if (error) throw error;
-        return jsonResponse(200, { success: true, data: { reports: reports ?? [] } });
+        return jsonResponse(200, {
+          success: true,
+          data: {
+            reports: (reports ?? []).map((report) => ({
+              ...report,
+              status_code: report.report_statuses?.code ?? report.status ?? null,
+              status_label: report.report_statuses?.label ?? report.status ?? null,
+            })),
+          },
+        });
       }
       case "consentStats": {
         const [{ count: total }, { count: active }] = await Promise.all([

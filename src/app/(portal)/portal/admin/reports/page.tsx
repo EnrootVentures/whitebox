@@ -15,6 +15,9 @@ type ReportRow = {
   created_at: string | null;
   incident_location: string | null;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
   is_spam: boolean | null;
   organisation: string;
   reporter: string;
@@ -26,6 +29,9 @@ type ReportDetailRow = {
   title?: string | null;
   description: string | null;
   status: string | null;
+  status_id?: number | null;
+  status_code?: string | null;
+  status_label?: string | null;
   created_at: string | null;
   incident_location: string | null;
   incident_date?: string | null;
@@ -68,12 +74,21 @@ type ReportDetails = {
   } | null;
 };
 
+type StatusHistoryRow = {
+  id: number;
+  report_id: number;
+  status_id: number;
+  comment_text?: string | null;
+  changed_at?: string | null;
+  report_statuses?: { code: string; label: string } | null;
+};
+
 const statusOptions = [
-  "waiting_filter",
-  "open",
+  "pre_evaluation",
+  "waiting_admitted",
+  "open_in_progress",
   "investigation",
-  "escalated",
-  "out_of_scope",
+  "remediation",
   "archived",
 ];
 
@@ -89,6 +104,16 @@ export default function AdminReportsPage() {
   const [attachmentLinks, setAttachmentLinks] = useState<
     { path: string; url: string }[]
   >([]);
+  const [statusLookup, setStatusLookup] = useState<
+    Record<string, { id: number; label: string }>
+  >({});
+  const [statusById, setStatusById] = useState<Record<number, { code: string; label: string }>>(
+    {}
+  );
+  const [statusTransitions, setStatusTransitions] = useState<
+    Record<number, Record<number, { requiresComment: boolean; requiresAction: boolean }>>
+  >({});
+  const [statusHistory, setStatusHistory] = useState<StatusHistoryRow[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -106,16 +131,102 @@ export default function AdminReportsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+    const loadStatusLookup = async () => {
+      const { data: rows, error } = await supabase
+        .from("report_statuses")
+        .select("status_id,code,label")
+        .order("display_order");
+      if (error || !isMounted) return;
+      const map: Record<string, { id: number; label: string }> = {};
+      const byId: Record<number, { code: string; label: string }> = {};
+      (rows ?? []).forEach((row) => {
+        map[row.code] = { id: row.status_id, label: row.label };
+        byId[row.status_id] = { code: row.code, label: row.label };
+      });
+      setStatusLookup(map);
+      setStatusById(byId);
+    };
+    loadStatusLookup();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadTransitions = async () => {
+      const { data: rows, error } = await supabase
+        .from("report_status_transitions")
+        .select("from_status_id,to_status_id,requires_comment,requires_action");
+      if (error || !isMounted) return;
+      const map: Record<number, Record<number, { requiresComment: boolean; requiresAction: boolean }>> =
+        {};
+      (rows ?? []).forEach((row) => {
+        if (!map[row.from_status_id]) map[row.from_status_id] = {};
+        map[row.from_status_id][row.to_status_id] = {
+          requiresComment: Boolean(row.requires_comment),
+          requiresAction: Boolean(row.requires_action),
+        };
+      });
+      setStatusTransitions(map);
+    };
+    loadTransitions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const filteredRows = useMemo(() => {
     if (!statusFilter) return rows;
-    return rows.filter((row) => row.status === statusFilter);
+    return rows.filter((row) => (row.status_code ?? row.status) === statusFilter);
   }, [rows, statusFilter]);
 
-  const updateReport = async (reportId: number, updates: Record<string, unknown>) => {
+  const updateReport = async (
+    reportId: number,
+    updates: Record<string, unknown> & { status_comment?: string | null }
+  ) => {
     setIsSaving(true);
     setError(null);
     try {
-      await adminInvoke("updateReport", { report_id: reportId, ...updates });
+      const statusComment = updates.status_comment ?? null;
+      const payload = { ...updates };
+      if (payload.status_code) {
+        const statusEntry = statusLookup[payload.status_code as string];
+        if (!statusEntry?.id) {
+          throw new Error("Status data not loaded yet. Please try again.");
+        }
+      }
+      delete payload.status_comment;
+      await adminInvoke("updateReport", { report_id: reportId, ...payload });
+      if (statusComment && payload.status_code) {
+        const statusId = statusLookup[payload.status_code as string]?.id ?? null;
+        if (statusId) {
+          const { data: historyRow } = await supabase
+            .from("report_status_history")
+            .select("id")
+            .eq("report_id", reportId)
+            .eq("status_id", statusId)
+            .order("changed_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (historyRow?.id) {
+            await supabase
+              .from("report_status_history")
+              .update({ comment_text: statusComment })
+              .eq("id", historyRow.id);
+          }
+        }
+      }
+      if (payload.status_code) {
+        const { data: historyRows } = await supabase
+          .from("report_status_history")
+          .select("id,report_id,status_id,comment_text,changed_at,report_statuses(code,label)")
+          .eq("report_id", reportId)
+          .order("changed_at", { ascending: false });
+        setStatusHistory((historyRows ?? []) as StatusHistoryRow[]);
+      }
       setRows((prev) =>
         prev.map((row) => (row.report_id === reportId ? { ...row, ...updates } : row))
       );
@@ -183,18 +294,39 @@ export default function AdminReportsPage() {
     };
   }, [details]);
 
+  useEffect(() => {
+    let isMounted = true;
+    const loadStatusHistory = async () => {
+      if (!details?.report) {
+        setStatusHistory([]);
+        return;
+      }
+      const { data } = await supabase
+        .from("report_status_history")
+        .select("id,report_id,status_id,comment_text,changed_at,report_statuses(code,label)")
+        .eq("report_id", details.report.report_id)
+        .order("changed_at", { ascending: false });
+      if (!isMounted) return;
+      setStatusHistory((data ?? []) as StatusHistoryRow[]);
+    };
+    void loadStatusHistory();
+    return () => {
+      isMounted = false;
+    };
+  }, [details?.report?.report_id]);
+
   const statusStyle = (status: string) => {
     switch (status) {
-      case "waiting_filter":
+      case "pre_evaluation":
         return { text: "text-amber-600", border: "border-amber-200", bg: "bg-amber-500" };
-      case "open":
+      case "waiting_admitted":
+        return { text: "text-slate-600", border: "border-slate-200", bg: "bg-slate-500" };
+      case "open_in_progress":
         return { text: "text-sky-600", border: "border-sky-200", bg: "bg-sky-500" };
       case "investigation":
         return { text: "text-indigo-600", border: "border-indigo-200", bg: "bg-indigo-500" };
-      case "escalated":
+      case "remediation":
         return { text: "text-rose-600", border: "border-rose-200", bg: "bg-rose-500" };
-      case "out_of_scope":
-        return { text: "text-slate-500", border: "border-slate-200", bg: "bg-slate-400" };
       case "archived":
         return { text: "text-emerald-600", border: "border-emerald-200", bg: "bg-emerald-500" };
       default:
@@ -202,22 +334,49 @@ export default function AdminReportsPage() {
     }
   };
 
-  const renderStatusStepper = (current: string | null | undefined) => (
+  const renderStatusStepper = (current: string | null | undefined, currentStatusId?: number | null) => {
+    const lookupReady = Object.keys(statusLookup).length > 0;
+    const transitionMap =
+      currentStatusId && statusTransitions[currentStatusId] ? statusTransitions[currentStatusId] : null;
+    const allowedStatusIds = transitionMap ? new Set(Object.keys(transitionMap).map(Number)) : null;
+    return (
     <div className="relative ml-1 space-y-3">
       {statusOptions.map((status, index) => {
         const isActive = current === status;
         const isLast = index === statusOptions.length - 1;
         const color = statusStyle(status);
+        const targetStatusId = statusLookup[status]?.id ?? null;
+        const transitionRule =
+          currentStatusId && targetStatusId && transitionMap
+            ? transitionMap[targetStatusId]
+            : null;
+        const isAllowed =
+          lookupReady &&
+          (!currentStatusId ||
+            (transitionMap && targetStatusId && allowedStatusIds?.has(targetStatusId)));
         return (
           <button
             key={status}
             type="button"
-            className="relative flex w-full items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-slate-50"
-            onClick={() =>
+            className={`relative flex w-full items-center gap-3 rounded-xl px-2 py-1 text-left transition ${
+              isAllowed ? "hover:bg-slate-50" : "cursor-not-allowed opacity-50"
+            }`}
+            disabled={!isAllowed}
+            onClick={() => {
+              if (!isAllowed) return;
+              let statusComment: string | null = null;
+              if (transitionRule?.requiresComment) {
+                statusComment = window.prompt("Add a comment for this status change:")?.trim() || "";
+                if (!statusComment) {
+                  setError("A comment is required for this status change.");
+                  return;
+                }
+              }
               updateReport(Number(details?.report.report_id), {
-                status,
-              })
-            }
+                status_code: status,
+                status_comment: statusComment || null,
+              });
+            }}
           >
             <div className="relative flex h-8 w-8 items-center justify-center">
               <div
@@ -244,6 +403,7 @@ export default function AdminReportsPage() {
       })}
     </div>
   );
+  };
 
   return (
     <SectionCard
@@ -318,10 +478,10 @@ export default function AdminReportsPage() {
                 <td className="px-4 py-3">
                   <select
                     className="rounded-full border border-slate-200 px-2 py-1 text-[11px]"
-                    value={row.status || ""}
+                    value={row.status_code ?? row.status ?? ""}
                     disabled={isSaving}
                     onChange={(event) =>
-                      updateReport(row.report_id, { status: event.target.value || null })
+                      updateReport(row.report_id, { status_code: event.target.value || null })
                     }
                   >
                     <option value="">-</option>
@@ -330,8 +490,8 @@ export default function AdminReportsPage() {
                         {status}
                       </option>
                     ))}
-                    {row.status && !statusOptions.includes(row.status) ? (
-                      <option value={row.status}>{row.status}</option>
+                    {row.status_code && !statusOptions.includes(row.status_code) ? (
+                      <option value={row.status_code}>{row.status_code}</option>
                     ) : null}
                   </select>
                 </td>
@@ -382,6 +542,22 @@ export default function AdminReportsPage() {
               const url = `${window.location.origin}/portal/admin/reports?report=${code}`;
               void navigator.clipboard.writeText(url);
             };
+            const activityItems = statusHistory
+              .map((entry) => ({
+                id: entry.id,
+                created_at: entry.changed_at,
+                title:
+                  entry.report_statuses?.label ??
+                  statusById[entry.status_id]?.label ??
+                  statusById[entry.status_id]?.code ??
+                  "Status updated",
+                comment: entry.comment_text ?? null,
+              }))
+              .sort((a, b) => {
+                const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+                return bTime - aTime;
+              });
 
             return (
               <div className="space-y-6">
@@ -397,7 +573,10 @@ export default function AdminReportsPage() {
                     </p>
                     <p className="mt-3 text-xs text-slate-400">Report Stage</p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {details.report.status ?? "waiting_filter"}
+                      {details.report.status_label ??
+                        details.report.status_code ??
+                        details.report.status ??
+                        "-"}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -443,9 +622,17 @@ export default function AdminReportsPage() {
                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
                       <p className="text-xs text-slate-400">Report Status</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {details.report.status ?? "-"}
+                        {details.report.status_label ??
+                          details.report.status_code ??
+                          details.report.status ??
+                          "-"}
                       </p>
-                      <div className="mt-4">{renderStatusStepper(details.report.status)}</div>
+                      <div className="mt-4">
+                        {renderStatusStepper(
+                          details.report.status_code ?? details.report.status ?? undefined,
+                          details.report.status_id ?? null
+                        )}
+                      </div>
                       <button
                         type="button"
                         className="mt-4 w-full rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600"
@@ -625,8 +812,35 @@ export default function AdminReportsPage() {
                     ) : null}
 
                     {activeTab === "activity" ? (
-                      <div className="mt-4 text-xs text-slate-500">
-                        Activity log will appear here as workflow events are tracked.
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600 shadow-sm">
+                        <p className="text-sm font-semibold text-slate-700">Activity Timeline</p>
+                        {activityItems.length ? (
+                          <div className="relative mt-4 space-y-4">
+                            <span className="absolute left-2 top-2 h-full w-px bg-slate-200" />
+                            {activityItems.map((item) => (
+                              <div key={item.id} className="relative pl-6">
+                                <span className="absolute left-[0.35rem] top-2 h-2 w-2 rounded-full bg-[var(--wb-cobalt)] shadow-[0_0_8px_rgba(59,130,246,0.35)]" />
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                  <p className="text-[11px] text-slate-500">
+                                    {item.created_at
+                                      ? new Date(item.created_at).toLocaleString()
+                                      : "-"}
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-slate-700">
+                                    Status changed to: {item.title}
+                                  </p>
+                                  {item.comment ? (
+                                    <p className="mt-1 text-xs text-slate-600">
+                                      {item.comment}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-4 text-xs text-slate-400">No activity yet.</p>
+                        )}
                       </div>
                     ) : null}
                   </div>

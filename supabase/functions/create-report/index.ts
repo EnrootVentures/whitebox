@@ -229,6 +229,11 @@ serve(async (req) => {
     }
 
     const reporter = await ensureAuthUser(payload);
+    const { data: defaultStatus } = await supabase
+      .from("report_statuses")
+      .select("status_id")
+      .eq("code", "pre_evaluation")
+      .maybeSingle();
 
     let reportCode = generateReportCode();
     let reportInsertError: Error | null = null;
@@ -246,6 +251,8 @@ serve(async (req) => {
           reporter_org_id: null,
           reporter_email: payload.reporter_email ?? reporter.email,
           is_anonymous: payload.is_anonymous ?? false,
+          status: "pre_evaluation",
+          status_id: defaultStatus?.status_id ?? null,
           share_contact_with_company: payload.share_contact_with_company ?? false,
           alert_direct_suppliers: payload.alert_direct_suppliers ?? false,
           alert_indirect_suppliers: payload.alert_indirect_suppliers ?? false,

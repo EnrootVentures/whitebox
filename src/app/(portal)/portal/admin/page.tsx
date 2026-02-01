@@ -10,7 +10,7 @@ export default function AdminDashboardPage() {
     totalReports: 0,
     waitingFilter: 0,
     investigating: 0,
-    escalated: 0,
+    remediation: 0,
     archivedReports: 0,
     spamReports: 0,
   });
@@ -22,13 +22,20 @@ export default function AdminDashboardPage() {
       totalReports: number;
       waitingFilter: number;
       investigating: number;
-      escalated: number;
+      remediation: number;
       archivedReports: number;
       spamReports: number;
     }>("dashboard")
       .then((data) => {
         if (!isMounted) return;
-        setStats(data);
+        setStats({
+          totalReports: data.totalReports ?? 0,
+          waitingFilter: data.waitingFilter ?? 0,
+          investigating: data.investigating ?? 0,
+          remediation: data.remediation ?? 0,
+          archivedReports: data.archivedReports ?? 0,
+          spamReports: data.spamReports ?? 0,
+        });
       })
       .catch((err) => {
         if (!isMounted) return;
@@ -71,7 +78,7 @@ export default function AdminDashboardPage() {
             {[
               { label: "Waiting filter", value: stats.waitingFilter.toString() },
               { label: "In investigation", value: stats.investigating.toString() },
-              { label: "Escalated", value: stats.escalated.toString() },
+              { label: "Remediation", value: stats.remediation.toString() },
             ].map((item) => (
               <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-4">
                 <p className="text-xs text-slate-400">{item.label}</p>
