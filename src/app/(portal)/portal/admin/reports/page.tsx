@@ -423,7 +423,7 @@ export default function AdminReportsPage() {
     return () => {
       isMounted = false;
     };
-  }, [details?.report?.report_id]);
+  }, [details?.report?.report_id, details?.report]);
 
   const statusStyle = (status: string) => {
     switch (status) {

@@ -677,7 +677,7 @@ export default function ReportsPage() {
     return () => {
       isMounted = false;
     };
-  }, [details?.report?.report_id]);
+  }, [details?.report?.report_id, details?.report]);
 
   const uploadCommentAttachment = async (reportId: number, file: File) => {
     const filePath = `comments/${reportId}/${Date.now()}_${file.name}`;
