@@ -99,6 +99,30 @@ type StatusHistoryRow = {
   report_statuses?: { code: string; label: string } | null;
 };
 
+function normalizeStatusHistoryRows(rows: unknown[]): StatusHistoryRow[] {
+  return rows.map((row) => {
+    const record = row as {
+      id: number;
+      report_id: number;
+      status_id: number;
+      comment_text?: string | null;
+      changed_at?: string | null;
+      report_statuses?: { code: string; label: string } | { code: string; label: string }[] | null;
+    };
+    const relation = Array.isArray(record.report_statuses)
+      ? record.report_statuses[0] ?? null
+      : record.report_statuses ?? null;
+    return {
+      id: record.id,
+      report_id: record.report_id,
+      status_id: record.status_id,
+      comment_text: record.comment_text ?? null,
+      changed_at: record.changed_at ?? null,
+      report_statuses: relation ? { code: relation.code, label: relation.label } : null,
+    };
+  });
+}
+
 type CommentRow = {
   comment_id: number;
   report_id: number;
@@ -263,7 +287,7 @@ export default function AdminReportsPage() {
           .select("id,report_id,status_id,comment_text,changed_at,report_statuses(code,label)")
           .eq("report_id", reportId)
           .order("changed_at", { ascending: false });
-        setStatusHistory((historyRows ?? []) as StatusHistoryRow[]);
+        setStatusHistory(normalizeStatusHistoryRows((historyRows ?? []) as unknown[]));
       }
       const refreshed = await adminInvoke<ReportDetails>("getReportDetails", { report_id: reportId });
       const refreshedReport = refreshed.report;
@@ -321,7 +345,7 @@ export default function AdminReportsPage() {
         .select("id,report_id,status_id,comment_text,changed_at,report_statuses(code,label)")
         .eq("report_id", reportId)
         .order("changed_at", { ascending: false });
-      setStatusHistory((historyRows ?? []) as StatusHistoryRow[]);
+      setStatusHistory(normalizeStatusHistoryRows((historyRows ?? []) as unknown[]));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to apply filter decision.");
     } finally {
@@ -409,7 +433,7 @@ export default function AdminReportsPage() {
           .order("created_at", { ascending: false }),
       ]);
       if (!isMounted) return;
-      setStatusHistory((historyData ?? []) as StatusHistoryRow[]);
+      setStatusHistory(normalizeStatusHistoryRows((historyData ?? []) as unknown[]));
       setComments((commentData ?? []) as CommentRow[]);
       const mappedActions =
         (actionData ?? []).map((action) => ({
