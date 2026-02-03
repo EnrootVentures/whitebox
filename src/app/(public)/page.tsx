@@ -87,7 +87,7 @@ export default function Home() {
                 Trusted by compliance teams
               </p>
               <p className="mt-3 text-lg">
-                "We needed a platform that respected anonymity while still enabling real action."
+                &quot; We needed a platform that respected anonymity while still enabling real action.&quot;
               </p>
               <p className="mt-4 text-sm text-white/70">Compliance lead, EU manufacturer</p>
             </div>
