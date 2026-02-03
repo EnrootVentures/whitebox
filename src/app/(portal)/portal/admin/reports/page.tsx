@@ -467,13 +467,19 @@ export default function AdminReportsPage() {
       if (!isMounted) return;
       setStatusHistory(normalizeStatusHistoryRows((historyData ?? []) as unknown[]));
       setComments((commentData ?? []) as CommentRow[]);
-      const mappedActions =
-        (actionData ?? []).map((action) => ({
-          ...action,
-          status_code: action.report_action_statuses?.code ?? action.status ?? null,
-          status_label: action.report_action_statuses?.label ?? action.status ?? null,
-        })) ?? [];
-      setActions(mappedActions as ActionRow[]);
+      const normalizedActions =
+        (actionData ?? []).map((action) => {
+          const relation = Array.isArray(action.report_action_statuses)
+            ? action.report_action_statuses[0] ?? null
+            : action.report_action_statuses ?? null;
+          return {
+            ...action,
+            status_code: relation?.code ?? action.status ?? null,
+            status_label: relation?.label ?? action.status ?? null,
+            report_action_statuses: relation,
+          };
+        }) ?? [];
+      setActions(normalizedActions as ActionRow[]);
     };
     void loadStatusHistory();
     return () => {
