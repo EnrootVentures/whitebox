@@ -40,17 +40,18 @@ export default function AdminSettingsPage() {
     ])
       .then(([profileData, settingsData]) => {
         if (!isMounted) return;
-        if (profileData.profile) {
+        const profileRow = profileData.profile;
+        if (profileRow) {
           setProfile((prev) => ({
             ...prev,
-            ...profileData.profile,
-            first_name: profileData.profile.first_name ?? "",
-            last_name: profileData.profile.last_name ?? "",
-            display_name: profileData.profile.display_name ?? "",
-            email: profileData.profile.email ?? "",
-            department: profileData.profile.department ?? "",
-            job_title: profileData.profile.job_title ?? "",
-            profile_picture_url: profileData.profile.profile_picture_url ?? "",
+            ...profileRow,
+            first_name: profileRow.first_name ?? "",
+            last_name: profileRow.last_name ?? "",
+            display_name: profileRow.display_name ?? "",
+            email: profileRow.email ?? "",
+            department: profileRow.department ?? "",
+            job_title: profileRow.job_title ?? "",
+            profile_picture_url: profileRow.profile_picture_url ?? "",
           }));
         }
         const map = new Map(settingsData.settings.map((row) => [row.key, row.value]));
