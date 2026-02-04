@@ -119,6 +119,42 @@ function toIntArray(values: string[]) {
     .filter((value) => Number.isFinite(value));
 }
 
+function normalizeDepartmentRows(rows: unknown[]): DepartmentRow[] {
+  return rows.map((row) => {
+    const record = row as DepartmentRow & {
+      organization_department_members?: Array<{
+        user_id: string;
+        user_profiles?:
+          | {
+              display_name: string | null;
+              first_name: string | null;
+              last_name: string | null;
+              email: string | null;
+            }
+          | {
+              display_name: string | null;
+              first_name: string | null;
+              last_name: string | null;
+              email: string | null;
+            }[]
+          | null;
+      }>;
+    };
+    return {
+      ...record,
+      organization_department_members: (record.organization_department_members ?? []).map((member) => {
+        const relation = Array.isArray(member.user_profiles)
+          ? member.user_profiles[0] ?? null
+          : member.user_profiles ?? null;
+        return {
+          ...member,
+          user_profiles: relation,
+        };
+      }),
+    };
+  });
+}
+
 export default function OrganisationDepartmentsPage() {
   const [organizationId, setOrganizationId] = useState<number | null>(null);
   const [rows, setRows] = useState<DepartmentRow[]>([]);
@@ -207,7 +243,7 @@ export default function OrganisationDepartmentsPage() {
       }));
     }
 
-    setRows((departmentRows ?? []) as DepartmentRow[]);
+    setRows(normalizeDepartmentRows((departmentRows ?? []) as unknown[]));
     setUsers((orgUsers ?? []) as OrgUserItem[]);
     setCountries((countryRows ?? []).map((country) => ({ id: country.country_name, label: country.country_name })));
     setRiskCategories((categoryRows ?? []).map((item) => ({ id: String(item.category_id), label: item.name })));
