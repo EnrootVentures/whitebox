@@ -26,6 +26,12 @@ type ReportOption = {
   title: string;
 };
 
+function normalizeActionStatusRelation(
+  relation: { code: string; label: string } | { code: string; label: string }[] | null | undefined
+) {
+  return Array.isArray(relation) ? (relation[0] ?? null) : (relation ?? null);
+}
+
 const statusOptions = [
   "suggested",
   "action_formulation",
@@ -81,13 +87,17 @@ export default function ActionsPage() {
           map[row.code] = { id: row.status_id, label: row.label };
         });
         setStatusLookup(map);
-        const mapped =
-          actionRows?.map((row) => ({
-            ...row,
-            status_code: row.report_action_statuses?.code ?? row.status ?? null,
-            status_label: row.report_action_statuses?.label ?? row.status ?? null,
-          })) ?? [];
-        setRows(mapped);
+        const normalizedRows =
+          actionRows?.map((row) => {
+            const statusRelation = normalizeActionStatusRelation(row.report_action_statuses);
+            return {
+              ...row,
+              report_action_statuses: statusRelation,
+              status_code: statusRelation?.code ?? row.status ?? null,
+              status_label: statusRelation?.label ?? row.status ?? null,
+            };
+          }) ?? [];
+        setRows(normalizedRows);
         setReports(reportRows ?? []);
       } catch (err) {
         if (!isMounted) return;
@@ -180,11 +190,15 @@ export default function ActionsPage() {
       }
 
       const mapped = insertRow
-        ? {
-            ...insertRow,
-            status_code: insertRow.report_action_statuses?.code ?? insertRow.status ?? null,
-            status_label: insertRow.report_action_statuses?.label ?? insertRow.status ?? null,
-          }
+        ? (() => {
+            const statusRelation = normalizeActionStatusRelation(insertRow.report_action_statuses);
+            return {
+              ...insertRow,
+              report_action_statuses: statusRelation,
+              status_code: statusRelation?.code ?? insertRow.status ?? null,
+              status_label: statusRelation?.label ?? insertRow.status ?? null,
+            };
+          })()
         : null;
       setRows((prev) => (mapped ? [mapped, ...prev] : prev));
       setForm({ reportId: "", description: "", dueDate: "", status: "action_formulation" });
