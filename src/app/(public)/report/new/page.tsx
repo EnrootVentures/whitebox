@@ -240,6 +240,14 @@ const fallbackLanguages: LanguageOption[] = [
   { id: "en-US", name: "English (US)", code: "en-US" },
 ];
 
+const fallbackOrgTypeOptions = [
+  { value: "company", label: "Company" },
+  { value: "supplier", label: "Supplier" },
+  { value: "ngo", label: "NGO" },
+  { value: "regulatory", label: "Regulatory" },
+  { value: "service_provider", label: "Service Provider" },
+];
+
 const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "";
 
 type ProcedureType = "grievance" | "whistleblowing";
@@ -405,6 +413,7 @@ export default function ReportNewPage() {
   const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>(fallbackLanguages);
   const [countryLanguageMap, setCountryLanguageMap] = useState<Record<string, string[]>>({});
   const [orgOptions, setOrgOptions] = useState<OrganisationOption[]>([]);
+  const [orgTypeOptions, setOrgTypeOptions] = useState(fallbackOrgTypeOptions);
   const [worksiteOptions, setWorksiteOptions] = useState<WorksiteOption[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [subCategoryOptions, setSubCategoryOptions] = useState<SubCategoryOption[]>([]);
@@ -454,6 +463,7 @@ export default function ReportNewPage() {
         { data: languageRows },
         { data: countryLanguageRows },
         { data: orgRows },
+        { data: orgTypeRows },
         { data: categoryRows },
         { data: subCategoryRows },
       ] = await Promise.all([
@@ -463,9 +473,13 @@ export default function ReportNewPage() {
         supabase
           .from("organisations")
           .select("organization_id,name,country,city,website,organization_type")
-          .eq("approval_status", "approved")
-          .eq("account_status", "active")
           .order("name"),
+        supabase
+          .from("organization_types")
+          .select("type_key,label,is_active,sort_order")
+          .eq("is_active", true)
+          .order("sort_order")
+          .order("label"),
         supabase.from("report_categories").select("category_id,name").order("name"),
         supabase.from("report_sub_categories").select("sub_category_id,name,category_id").order("name"),
       ]);
@@ -510,6 +524,11 @@ export default function ReportNewPage() {
           id: cat.category_id,
           name: cat.name,
         })) ?? [];
+      const nextOrgTypes =
+        orgTypeRows?.map((item) => ({
+          value: item.type_key,
+          label: item.label,
+        })) ?? [];
 
       const nextSubCategories =
         subCategoryRows?.map((sub) => ({
@@ -522,6 +541,7 @@ export default function ReportNewPage() {
       if (nextLanguages.length) setLanguageOptions(nextLanguages);
       if (Object.keys(nextMap).length) setCountryLanguageMap(nextMap);
       setOrgOptions(nextOrgs);
+      if (nextOrgTypes.length) setOrgTypeOptions(nextOrgTypes);
       setCategoryOptions(nextCategories);
       setSubCategoryOptions(nextSubCategories);
     };
@@ -2125,10 +2145,11 @@ export default function ReportNewPage() {
                   }
                 >
                   <option value="">Organization type</option>
-                  <option value="company">Company</option>
-                  <option value="supplier">Supplier</option>
-                  <option value="ngo">NGO</option>
-                  <option value="regulatory">Regulatory</option>
+                  {orgTypeOptions.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
                 </select>
                 {companyErrors.organization_type ? (
                   <p className="mt-1 text-xs text-rose-500">

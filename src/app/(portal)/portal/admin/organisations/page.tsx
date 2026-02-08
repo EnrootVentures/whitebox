@@ -55,23 +55,38 @@ type OrgDetails = {
   report_count: number;
 };
 
-const orgTypeOptions = ["company", "supplier", "ngo", "regulatory"];
+type OrgTypeRow = {
+  type_key: string;
+  label: string;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number;
+};
 
 export default function AdminOrganisationsPage() {
   const [rows, setRows] = useState<OrgRow[]>([]);
+  const [orgTypes, setOrgTypes] = useState<OrgTypeRow[]>([]);
   const [typeFilter, setTypeFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [details, setDetails] = useState<OrgDetails | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [typesModalOpen, setTypesModalOpen] = useState(false);
+  const [newTypeKey, setNewTypeKey] = useState("");
+  const [newTypeLabel, setNewTypeLabel] = useState("");
+  const [newTypeDescription, setNewTypeDescription] = useState("");
 
   useEffect(() => {
     let isMounted = true;
-    adminInvoke<{ organisations: OrgRow[] }>("listOrganisations")
-      .then((data) => {
+    Promise.all([
+      adminInvoke<{ organisations: OrgRow[] }>("listOrganisations"),
+      adminInvoke<{ types: OrgTypeRow[] }>("listOrganizationTypes"),
+    ])
+      .then(([orgData, typeData]) => {
         if (!isMounted) return;
-        setRows(data.organisations);
+        setRows(orgData.organisations);
+        setOrgTypes(typeData.types);
       })
       .catch((err) => {
         if (!isMounted) return;
@@ -81,6 +96,20 @@ export default function AdminOrganisationsPage() {
       isMounted = false;
     };
   }, []);
+
+  const selectTypeOptions = useMemo(() => {
+    const fromDb = orgTypes.map((item) => item.type_key);
+    const fromRows = rows
+      .map((row) => row.organization_type || "")
+      .filter((value): value is string => Boolean(value));
+    return Array.from(new Set([...fromDb, ...fromRows]));
+  }, [orgTypes, rows]);
+
+  const labelByTypeKey = useMemo(
+    () =>
+      Object.fromEntries(orgTypes.map((item) => [item.type_key, item.label])),
+    [orgTypes]
+  );
 
   const filteredRows = useMemo(() => {
     if (!typeFilter) return rows;
@@ -105,6 +134,11 @@ export default function AdminOrganisationsPage() {
   const refreshRows = async () => {
     const data = await adminInvoke<{ organisations: OrgRow[] }>("listOrganisations");
     setRows(data.organisations);
+  };
+
+  const refreshOrgTypes = async () => {
+    const data = await adminInvoke<{ types: OrgTypeRow[] }>("listOrganizationTypes");
+    setOrgTypes(data.types);
   };
 
   const approveOrganisation = async (id: number) => {
@@ -190,6 +224,56 @@ export default function AdminOrganisationsPage() {
     }
   };
 
+  const createOrgType = async () => {
+    setIsSaving(true);
+    setError(null);
+    try {
+      await adminInvoke("createOrganizationType", {
+        type_key: newTypeKey,
+        label: newTypeLabel,
+        description: newTypeDescription,
+      });
+      setNewTypeKey("");
+      setNewTypeLabel("");
+      setNewTypeDescription("");
+      await refreshOrgTypes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to create organization type.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateOrgType = async (
+    typeKey: string,
+    updates: Partial<Pick<OrgTypeRow, "label" | "description" | "sort_order" | "is_active">>
+  ) => {
+    setIsSaving(true);
+    setError(null);
+    try {
+      await adminInvoke("updateOrganizationType", { type_key: typeKey, ...updates });
+      await refreshOrgTypes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update organization type.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const removeOrgType = async (typeKey: string) => {
+    if (!window.confirm(`Remove organization type "${typeKey}"?`)) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      await adminInvoke("removeOrganizationType", { type_key: typeKey });
+      await refreshOrgTypes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to remove organization type.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <SectionCard
       title="Organisations"
@@ -206,12 +290,19 @@ export default function AdminOrganisationsPage() {
             onChange={(event) => setTypeFilter(event.target.value)}
           >
             <option value="">Filter</option>
-            {orgTypeOptions.map((type) => (
+            {selectTypeOptions.map((type) => (
               <option key={type} value={type}>
-                {type}
+                {labelByTypeKey[type] ?? type}
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 px-3 py-2 text-xs text-slate-600"
+            onClick={() => setTypesModalOpen(true)}
+          >
+            Manage Types
+          </button>
         </div>
       }
     >
@@ -255,9 +346,9 @@ export default function AdminOrganisationsPage() {
                     }
                   >
                     <option value="">-</option>
-                    {orgTypeOptions.map((type) => (
+                    {selectTypeOptions.map((type) => (
                       <option key={type} value={type}>
-                        {type}
+                        {labelByTypeKey[type] ?? type}
                       </option>
                     ))}
                   </select>
@@ -465,6 +556,163 @@ export default function AdminOrganisationsPage() {
         ) : (
           <p className="text-sm text-slate-500">Select an organisation to view details.</p>
         )}
+      </Modal>
+      <Modal
+        open={typesModalOpen}
+        title="Organisation Types"
+        description="Manage selectable organization types used across forms."
+        onClose={() => setTypesModalOpen(false)}
+        size="3xl"
+        bodyClassName="max-h-[72vh] overflow-y-auto pr-1"
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              placeholder="Type key (e.g. service_provider)"
+              value={newTypeKey}
+              onChange={(event) => setNewTypeKey(event.target.value)}
+            />
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              placeholder="Label (e.g. Service Provider)"
+              value={newTypeLabel}
+              onChange={(event) => setNewTypeLabel(event.target.value)}
+            />
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              placeholder="Description (optional)"
+              value={newTypeDescription}
+              onChange={(event) => setNewTypeDescription(event.target.value)}
+            />
+            <button
+              type="button"
+              className="rounded-xl bg-[var(--wb-navy)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              disabled={isSaving || !newTypeKey.trim() || !newTypeLabel.trim()}
+              onClick={createOrgType}
+            >
+              Add
+            </button>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs text-slate-600">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-[0.15em] text-slate-400">
+                <tr>
+                  <th className="px-3 py-2">Key</th>
+                  <th className="px-3 py-2">Label</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Order</th>
+                  <th className="px-3 py-2">Active</th>
+                  <th className="px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orgTypes.map((item) => (
+                  <tr key={item.type_key} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-mono text-[11px]">{item.type_key}</td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                        value={item.label}
+                        onBlur={(event) => {
+                          const next = event.target.value.trim();
+                          if (next && next !== item.label) {
+                            updateOrgType(item.type_key, { label: next });
+                          }
+                        }}
+                        onChange={(event) =>
+                          setOrgTypes((prev) =>
+                            prev.map((row) =>
+                              row.type_key === item.type_key
+                                ? { ...row, label: event.target.value }
+                                : row
+                            )
+                          )
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                        value={item.description ?? ""}
+                        onChange={(event) =>
+                          setOrgTypes((prev) =>
+                            prev.map((row) =>
+                              row.type_key === item.type_key
+                                ? { ...row, description: event.target.value }
+                                : row
+                            )
+                          )
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                        value={item.sort_order}
+                        onBlur={(event) => {
+                          const next = Number(event.target.value);
+                          if (Number.isFinite(next) && next !== item.sort_order) {
+                            updateOrgType(item.type_key, { sort_order: next });
+                          }
+                        }}
+                        onChange={(event) =>
+                          setOrgTypes((prev) =>
+                            prev.map((row) =>
+                              row.type_key === item.type_key
+                                ? { ...row, sort_order: Number(event.target.value) || 0 }
+                                : row
+                            )
+                          )
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={item.is_active}
+                          onChange={(event) =>
+                            updateOrgType(item.type_key, { is_active: event.target.checked })
+                          }
+                        />
+                        <span>{item.is_active ? "Yes" : "No"}</span>
+                      </label>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                          disabled={isSaving || !item.label.trim()}
+                          onClick={() =>
+                            updateOrgType(item.type_key, {
+                              label: item.label.trim(),
+                              description: item.description?.trim() || null,
+                              sort_order: item.sort_order,
+                              is_active: item.is_active,
+                            })
+                          }
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-rose-200 px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                          disabled={isSaving}
+                          onClick={() => removeOrgType(item.type_key)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </Modal>
       {error ? (
         <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">

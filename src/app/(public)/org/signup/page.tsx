@@ -14,7 +14,7 @@ const steps = [
   "Complete",
 ];
 
-const orgTypes = [
+const fallbackOrgTypes = [
   { value: "company", label: "Company" },
   { value: "supplier", label: "Supplier" },
   { value: "ngo", label: "NGO" },
@@ -325,6 +325,9 @@ export default function OrgSignupPage() {
   const captchaWidgetId = useRef<number | null>(null);
   const [countryOptions, setCountryOptions] = useState<CountryOption[]>(fallbackCountries);
   const [orgOptions, setOrgOptions] = useState<OrganisationOption[]>([]);
+  const [orgTypeOptions, setOrgTypeOptions] = useState<{ value: string; label: string }[]>(
+    fallbackOrgTypes
+  );
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [showErrors, setShowErrors] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -360,9 +363,15 @@ export default function OrgSignupPage() {
     let isMounted = true;
 
     const loadOptions = async () => {
-      const [{ data: countryRows }, { data: orgRows }] = await Promise.all([
+      const [{ data: countryRows }, { data: orgRows }, { data: typeRows }] = await Promise.all([
         supabase.from("countries").select("country_id,country_name").order("country_name"),
         supabase.from("organisations").select("organization_id,name,country").order("name"),
+        supabase
+          .from("organization_types")
+          .select("type_key,label,is_active,sort_order")
+          .eq("is_active", true)
+          .order("sort_order")
+          .order("label"),
       ]);
 
       if (!isMounted) return;
@@ -378,9 +387,15 @@ export default function OrgSignupPage() {
           name: org.name,
           country: org.country,
         })) ?? [];
+      const nextOrgTypes =
+        typeRows?.map((item) => ({
+          value: item.type_key,
+          label: item.label,
+        })) ?? [];
 
       if (nextCountries.length) setCountryOptions(nextCountries);
       setOrgOptions(nextOrgs);
+      if (nextOrgTypes.length) setOrgTypeOptions(nextOrgTypes);
     };
 
     loadOptions();
@@ -674,7 +689,7 @@ export default function OrgSignupPage() {
                 onChange={(event) => update("orgType", event.target.value)}
               >
                 <option value="">Organisation type</option>
-                {orgTypes.map((type) => (
+                {orgTypeOptions.map((type) => (
                   <option key={type.value} value={type.value}>
                     {type.label}
                   </option>

@@ -31,6 +31,15 @@ function jsonResponse(status: number, body: Record<string, unknown>) {
   });
 }
 
+function normalizeTypeKey(value: unknown) {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+  return raw;
+}
+
 async function requireAdmin(authHeader: string) {
   if (!anonKey) {
     throw new Error("SUPABASE_ANON_KEY is missing for admin auth.");
@@ -248,6 +257,80 @@ serve(async (req) => {
           .from("organisations")
           .update(allowed)
           .eq("organization_id", organization_id);
+        if (error) throw error;
+        return jsonResponse(200, { success: true });
+      }
+      case "listOrganizationTypes": {
+        const { data: types, error } = await adminClient
+          .from("organization_types")
+          .select("type_key,label,description,is_active,sort_order,created_at,updated_at")
+          .order("sort_order", { ascending: true })
+          .order("label", { ascending: true });
+        if (error) throw error;
+        return jsonResponse(200, { success: true, data: { types: types ?? [] } });
+      }
+      case "createOrganizationType": {
+        const { type_key, label, description, is_active, sort_order } = payload ?? {};
+        const normalizedTypeKey = normalizeTypeKey(type_key);
+        if (!normalizedTypeKey) throw new Error("type_key is required.");
+        if (!label || !String(label).trim()) throw new Error("label is required.");
+
+        const { error } = await adminClient.from("organization_types").insert({
+          type_key: normalizedTypeKey,
+          label: String(label).trim(),
+          description: description ? String(description).trim() : null,
+          is_active: typeof is_active === "boolean" ? is_active : true,
+          sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
+        });
+        if (error) throw error;
+        return jsonResponse(200, { success: true });
+      }
+      case "updateOrganizationType": {
+        const { type_key, ...updates } = payload ?? {};
+        const normalizedTypeKey = normalizeTypeKey(type_key);
+        if (!normalizedTypeKey) throw new Error("type_key is required.");
+
+        const allowed = {
+          label:
+            typeof updates.label === "string" && updates.label.trim()
+              ? updates.label.trim()
+              : undefined,
+          description:
+            typeof updates.description === "string" ? updates.description.trim() || null : undefined,
+          is_active: typeof updates.is_active === "boolean" ? updates.is_active : undefined,
+          sort_order:
+            updates.sort_order !== undefined && Number.isFinite(Number(updates.sort_order))
+              ? Number(updates.sort_order)
+              : undefined,
+        };
+
+        const { error } = await adminClient
+          .from("organization_types")
+          .update(allowed)
+          .eq("type_key", normalizedTypeKey);
+        if (error) throw error;
+        return jsonResponse(200, { success: true });
+      }
+      case "removeOrganizationType": {
+        const { type_key } = payload ?? {};
+        const normalizedTypeKey = normalizeTypeKey(type_key);
+        if (!normalizedTypeKey) throw new Error("type_key is required.");
+
+        const { count: usageCount, error: usageError } = await adminClient
+          .from("organisations")
+          .select("organization_id", { count: "exact", head: true })
+          .eq("organization_type", normalizedTypeKey);
+        if (usageError) throw usageError;
+        if ((usageCount ?? 0) > 0) {
+          throw new Error(
+            "This type is currently used by one or more organisations. Set it inactive instead of removing it.",
+          );
+        }
+
+        const { error } = await adminClient
+          .from("organization_types")
+          .delete()
+          .eq("type_key", normalizedTypeKey);
         if (error) throw error;
         return jsonResponse(200, { success: true });
       }
