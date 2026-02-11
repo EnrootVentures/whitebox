@@ -64,6 +64,12 @@ type FieldHelpState = {
   easy: string;
 };
 
+const isEnglishLanguage = (language: Pick<LanguageOption, "name" | "code">) => {
+  const code = (language.code || "").trim().toLowerCase();
+  const name = (language.name || "").trim().toLowerCase();
+  return code === "en" || code === "en-us" || code.startsWith("en-") || name.includes("english");
+};
+
 const fallbackCountryNames = [
   "Afghanistan",
   "Albania",
@@ -946,11 +952,19 @@ export default function ReportNewPage() {
         })) ?? [];
 
       const nextLanguages =
-        languageRows?.map((row) => ({
-          id: String(row.language_id),
-          name: row.language_name,
-          code: row.language_code,
-        })) ?? [];
+        (
+          languageRows?.map((row) => ({
+            id: String(row.language_id),
+            name: row.language_name,
+            code: row.language_code,
+          })) ?? []
+        ).sort((a, b) => {
+          const aIsEnglish = isEnglishLanguage(a);
+          const bIsEnglish = isEnglishLanguage(b);
+          if (aIsEnglish && !bIsEnglish) return -1;
+          if (!aIsEnglish && bIsEnglish) return 1;
+          return a.name.localeCompare(b.name);
+        });
 
       const nextMap: Record<string, string[]> = {};
       (countryLanguageRows ?? []).forEach((row) => {
@@ -1164,9 +1178,7 @@ export default function ReportNewPage() {
 
   const defaultLanguage = useMemo(() => {
     if (!availableLanguages.length) return null;
-    const english = availableLanguages.find((lang) =>
-      lang.name.toLowerCase().includes("english") || lang.code.toLowerCase() === "en" || lang.code.toLowerCase() === "en-us"
-    );
+    const english = availableLanguages.find((lang) => isEnglishLanguage(lang));
     return english ?? availableLanguages[0];
   }, [availableLanguages]);
 
@@ -1189,15 +1201,16 @@ export default function ReportNewPage() {
   useEffect(() => {
     if (!availableLanguages.length) return;
     const availableIds = new Set(availableLanguages.map((lang) => lang.id));
+    const fallbackLanguageId = defaultLanguage?.id ?? availableLanguages[0].id;
     setForm((prev) => {
       const nextFormLanguage =
         prev.formLanguage && availableIds.has(prev.formLanguage)
           ? prev.formLanguage
-          : availableLanguages[0].id;
+          : fallbackLanguageId;
       const nextInputLanguage =
         prev.inputLanguage && availableIds.has(prev.inputLanguage)
           ? prev.inputLanguage
-          : availableLanguages[0].id;
+          : fallbackLanguageId;
       if (nextFormLanguage === prev.formLanguage && nextInputLanguage === prev.inputLanguage) {
         return prev;
       }
@@ -1207,7 +1220,7 @@ export default function ReportNewPage() {
         inputLanguage: nextInputLanguage,
       };
     });
-  }, [availableLanguages]);
+  }, [availableLanguages, defaultLanguage]);
 
   useEffect(() => {
     const root = formSectionRef.current;
